@@ -24,7 +24,6 @@ def loadMesaData(mesa_LOGS_directory, filename_history = None, verbose_timing = 
     Returns:
     Data1D: data1d object containing mesa data
     """
-    print("LOADING MESA")
 
     if verbose_timing: _ = time()
 
