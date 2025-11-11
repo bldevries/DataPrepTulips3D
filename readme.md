@@ -6,6 +6,4 @@
 - Activate the Python environment you want to use
 - Go to the directory containing the setup.py file
 - pip install .
-- Now in Python you can load the package: import DataPrepTulips3D as DP
-- Try something like: d = dp.loadMesaData(mesa_LOGS_directory = "example_MESA_data/binary/Profiles/LOGS1", filename_history = "history1.data")
-- Then do: d.print_summary()
+- For usage see this [notebook](https://github.com/bldevries/DataPrepTulips3D/blob/main/notebooks/Tutorial1_try_it_out.ipynb) 
