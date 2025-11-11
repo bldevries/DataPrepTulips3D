@@ -12,7 +12,7 @@ import mesaPlot as mp
 
 import DataPrepTulips3D as DP
 
-def loadMesaData(mesa_LOGS_directory, filename_history = None, verbose_timing = False):
+def loadMesaData(mesa_LOGS_directory, filename_history = None, verbose_timing = False, profiles=['mass', 'logT', 'logRho', 'he4']):
     """
     Loads MESA data into a data1D object
 
@@ -55,9 +55,8 @@ def loadMesaData(mesa_LOGS_directory, filename_history = None, verbose_timing = 
     loadMesaProfile(m , data, mesa_LOGS_directory, property_name=property_name_r_axis)
         
     # Load the different profiles
-    property_name_values = ['mass', 'logT', 'logRho', 'he4'] #, 'zone', 'logP', 'h1', 'he3', ]#, , 'energy', 'x_mass_fraction_H', 'y_mass_fraction_He', 'z_mass_fraction_metals',  'c12', 'n14', 'o16', 'ne20', 'mg24', 'si28', 's32', 'ar36', 'ca40', 'ti44', 'cr48', 'fe52', 'ni56', 'fe54', 'fe56', 'cr56', 'opacity', 'luminosity', 'mlt_mixing_length', 'mlt_mixing_type', 'conv_vel', 'mixing_type', 'log_D_mix', 'log_D_mix_non_rotation', 'log_D_conv', 'log_D_semi', 'log_D_ovr', 'log_D_thrm', 'tau', 'omega', 'j_rot', 'fp_rot', 'ft_rot', 'r_polar', 'r_equatorial', 'am_log_D_visc', 'am_log_D_DSI', 'am_log_D_SH', 'am_log_D_SSI', 'am_log_D_ES', 'am_log_D_GSF', 'am_log_D_ST', 'am_log_nu_ST', 'dynamo_log_B_r', 'dynamo_log_B_phi']
+    property_name_values = profiles #, 'zone', 'logP', 'h1', 'he3', ]#, , 'energy', 'x_mass_fraction_H', 'y_mass_fraction_He', 'z_mass_fraction_metals',  'c12', 'n14', 'o16', 'ne20', 'mg24', 'si28', 's32', 'ar36', 'ca40', 'ti44', 'cr48', 'fe52', 'ni56', 'fe54', 'fe56', 'cr56', 'opacity', 'luminosity', 'mlt_mixing_length', 'mlt_mixing_type', 'conv_vel', 'mixing_type', 'log_D_mix', 'log_D_mix_non_rotation', 'log_D_conv', 'log_D_semi', 'log_D_ovr', 'log_D_thrm', 'tau', 'omega', 'j_rot', 'fp_rot', 'ft_rot', 'r_polar', 'r_equatorial', 'am_log_D_visc', 'am_log_D_DSI', 'am_log_D_SH', 'am_log_D_SSI', 'am_log_D_ES', 'am_log_D_GSF', 'am_log_D_ST', 'am_log_nu_ST', 'dynamo_log_B_r', 'dynamo_log_B_phi']
     for p in property_name_values:
-        print(p)
         loadMesaProfile(m , data, mesa_LOGS_directory, property_name=p, r_grid = data.GridPropertiesList["logR"].value_afo_time)
     return data
 

@@ -52,8 +52,10 @@ class Data1D():
         print(f" * id = {self.identifier}")
         print(f" * Time grid length: {len(self.time_grid)}")
         print()
+        print(f"Properties of the total object: ")
         for i, (k, v) in enumerate(self.TotalPropertiesList.items()):
             print(f" - {k} (Tot): len={len(v.value_afo_time)}")
+        print(f"Properties as a function of radius: ")
         for i, (k, v) in enumerate(self.GridPropertiesList.items()):
             print(f" - {k} (Grid): len={len(v.value_afo_time)}")
         # for k in self.TotalPropertiesList.keys():
