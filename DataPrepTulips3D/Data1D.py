@@ -87,10 +87,15 @@ class Data1D():
     def getTime(self):
         return self.time_grid
 
-    def get_grid_property(self, name):
-        return self.GridPropertiesList[name]
+    def getProperty(self, name):
+        if name in self.TotalPropertiesList.keys():
+            return list(zip(*[self.TotalPropertiesList[name].getGrid(), self.TotalPropertiesList[name].getValue()]))
+        elif name in self.GridPropertiesList.keys():
+            return list(zip(*[self.GridPropertiesList[name].getGrid(), self.GridPropertiesList[name].getValue()]))
+        else:
+            raise KeyError(f"No {name=} found in either total or grid properties")
 
-    def get_radial_interpolated_property(self, name, time_index=None):
+    def getInterpolatedProperty(self, name, time_index=None):
         '''Get an interpolated property that is a function of radius'''
         prop = self.GridPropertiesList[name]
 
