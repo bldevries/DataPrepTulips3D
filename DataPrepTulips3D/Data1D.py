@@ -1,4 +1,4 @@
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, CubicSpline
 import pickle
 
 
@@ -40,6 +40,12 @@ class Data1D():
             self.r_afo_time = r_afo_time
             # print(name, len(self.r_afo_time), len(self.value_afo_time ))
 
+        def getValue(self):
+            return self.value_afo_time
+
+        def getGrid(self):
+            return self.r_afo_time
+
     def print_summary(self):
         print("--")
         print(f"** Content of Data1D object **")
@@ -76,6 +82,11 @@ class Data1D():
             {name: self.TotalProperty(name, value_afo_time)}\
             )
 
+    def getTime(self):
+        return self.time_grid
+
+    def get_grid_property(self, name):
+        return self.GridPropertiesList[name]
 
     def get_radial_interpolated_property(self, name, time_index=None):
         '''Get an interpolated property that is a function of radius'''
