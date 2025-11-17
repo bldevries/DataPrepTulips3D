@@ -61,7 +61,7 @@ def loadMesaData(mesa_LOGS_directory, filename_history = None, verbose_timing = 
     return data
 
 
-def loadMesaProfile(m, data, mesa_LOGS_directory, property_name="logRho", r_grid=[]):#, raxis="mass"):
+def loadMesaProfile(m, data, mesa_LOGS_directory, property_name="logRho", r_grid=None):#, raxis="mass"):
     '''Reads in a profile data from a mesa file'''
 
     def find_profile(m, mesa_LOGS_directory, time_ind=0):
@@ -85,8 +85,10 @@ def loadMesaProfile(m, data, mesa_LOGS_directory, property_name="logRho", r_grid
         # list_r.append(r)
         list_prop.append(prop)
 
-    data.set_grid_property(property_name, list_prop, r_afo_time = r_grid)#, list_r)
-
+    if r_grid:
+        data.set_grid_property(property_name, list_prop, r_afo_time = r_grid)#, list_r)
+    else:
+        data.set_grid_property(property_name, list_prop, r_afo_time = list_prop)#, list_r)
 
 def loadMesaTeffData(mesa_object , data, verbose_timing=False):
     '''Reads in Teff data from a mesa file'''

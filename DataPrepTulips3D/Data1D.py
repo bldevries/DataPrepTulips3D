@@ -1,6 +1,6 @@
 from scipy.interpolate import interp1d, CubicSpline
 import pickle
-
+import numpy as np
 
 def save_Data1D_to_pickle(data1d, filepath):
     '''Saves a Data1D object into a pickle file'''
@@ -46,6 +46,9 @@ class Data1D():
         def getGrid(self):
             return self.r_afo_time
 
+    def getGridPropertyLabels(self):
+        return list(self.GridPropertiesList.keys())
+
     def print_summary(self):
         print("--")
         print(f"** Content of Data1D object **")
@@ -54,21 +57,21 @@ class Data1D():
         print()
         print(f"Properties of the total object: ")
         for i, (k, v) in enumerate(self.TotalPropertiesList.items()):
-            print(f" - {k} (Tot): len={len(v.value_afo_time)}")
+            print(f" - {k} (Tot): lenTime={len(v.value_afo_time)}")
         print(f"Properties as a function of radius: ")
         for i, (k, v) in enumerate(self.GridPropertiesList.items()):
-            print(f" - {k} (Grid): len={len(v.value_afo_time)}")
+            print(f" - {k} (Grid): lenTime={len(v.value_afo_time)}, , lenRadii={len(v.value_afo_time[0])}")
         # for k in self.TotalPropertiesList.keys():
             # print(f"{k}: {self.TotalPropertiesList[k].shape}")
         print("--")
 
     def set_grid_property(self, name, value_afo_time, r_afo_time=[]):
         '''Sets a property that is a function of radius, and time'''
-        if len(value_afo_time) != len(self.time_grid):
-            raise ValueError("Value not the same length as time grid") 
+        # if len(value_afo_time) != len(self.time_grid):
+            # raise ValueError("Value not the same length as time grid") 
         if len(r_afo_time) != 0:
-            if len(r_afo_time) != len(self.time_grid): 
-                raise ValueError("Grid not the same length as time grid") 
+            # if len(r_afo_time) != len(self.time_grid): 
+                # raise ValueError("Grid not the same length as time grid") 
             for i in range(len(value_afo_time)):
                 if(len(value_afo_time[i]) != len(r_afo_time[i])): 
                     raise ValueError(f"Value entry {i} and grid entry not the same length") 
@@ -108,3 +111,37 @@ class Data1D():
             value_interpol = -1
 
         return value_interpol
+
+    def reduceResolutionRadialData(self, max_nr_points):
+        for k in self.GridPropertiesList.keys():
+            # if k == "logR":
+            #     list_radii, list_value = list(zip(*self.getProperty(k)))
+
+            #     max_r, min_r = np.max(radius), np.min(radius)
+            #     step = (max_r-min_r)/(max_nr_points-1)#int(percentage/100*len(radius))
+            #     new_r = np.arange(start=min_r, stop=max_r, step=step)
+            # else:
+            print("Resetting: ", k)
+            list_radii, list_value = list(zip(*self.getProperty(k)))
+            list_interpolated = self.getInterpolatedProperty(k)
+
+            if len(list_radii[0]) > max_nr_points:
+                new_list_radii, new_list_value = [] , []
+                for t in range(len(list_radii)):
+                    radius, value = list_radii[t], list_value[t]
+
+                    max_r, min_r = np.max(radius), np.min(radius)
+                    step = (max_r-min_r)/(max_nr_points-1)#int(percentage/100*len(radius))
+                    new_r = np.arange(start=min_r, stop=max_r, step=step)
+                    new_r = np.append(new_r, max_r)
+                    new_value = list_interpolated[t](new_r)
+                    new_list_radii.append(new_r)
+                    new_list_value.append(new_value)
+
+
+                self.set_grid_property(name=k, value_afo_time=new_list_value, r_afo_time=new_list_radii)
+            print("  - Done")
+
+
+
+
