@@ -34,6 +34,7 @@ def load_from_pickle(filepath):
     return data_dict
 
 def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
+                t_range = -1,\
                 filename_history = None, verbose_timing = False, \
                 profiles=['mass', 'logT', 'logRho', 'he4'], \
                 r_grid_name="mass"):
@@ -61,7 +62,7 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     """
     # Besides the given profiles we also want to read in the energy production and Teff
     profiles = profiles + ["en"]
-    
+
     if verbose_timing: _ = time()
 
     # Create MESA object
@@ -79,10 +80,14 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     # We want to reduce the resolution of the t_grid to t_resolution
     # Get t_resolution elements from t_grid using these indices:
     _t_grid = m.hist.star_age
-    _t_indices = np.round(np.linspace(0, len(_t_grid) - 1, t_resolution)).astype(int)
+
+    if t_range == -1: _t_indices = np.round(np.linspace(0, len(_t_grid) - 1, t_resolution)).astype(int)
+    else: _t_indices = np.round(np.linspace(t_range[0], t_range[1] - 1, t_resolution)).astype(int)
     new_t_grid = _t_grid[_t_indices]
 
     if verbose_timing: print("Timing load mesa file: ", time()-_)
+
+    print("Original/new time resolution: ", len(_t_grid), len(new_t_grid))
 
     # Load the Teff data of the star
     logTeff_values = loadMesaTeffData(m, new_t_grid)
