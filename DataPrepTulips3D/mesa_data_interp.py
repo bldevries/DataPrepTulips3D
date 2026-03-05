@@ -13,7 +13,7 @@ from scipy.interpolate import interp1d
 
 # import Data1D.Data1D
 
-import DataPrepTulips3D as DP
+# import DataPrepTulips3D as DP
 
 key_DataPrepTulips3D_prof_labels = "prof_labels"
 key_DataPrepTulips3D_r_resolution = "r_resolution"
@@ -21,9 +21,54 @@ key_DataPrepTulips3D_t_resolution = "t_resolution"
 key_DataPrepTulips3D_data_prof_t_r = "data_prof_t_r"
 key_DataPrepTulips3D_data_r_max = "data_r_max"
 
+def rescale_time(indices, m, time_scale_type="model_number"):
+    """Rescale the time.
+    
+    Rescale time indices depending on the time_type.
+    
+    Parameters
+    ----------    
+    indices : np.array or list of int
+        Containing selected indices.
+    m : mesa Object
+    time_scale_type : str
+        One of `model_number`, `linear`, or `log_to_end`. For `model_number`, the time follows the moment when a new MESA model was saved. For `linear`, the time follows linear steps in star_age. For `log_to_end`, the time axis is tau = log10(t_final - t), where t_final is the final star_age of the model.
+    
+    Returns
+    -------
+    ind_select : list
+        New list of indices that reflect the rescaling in time.
+    """
+
+    def find_closest(ary, value):
+        return int(np.abs(ary - value).argmin())
+
+    age = m.hist.star_age
+    if time_scale_type == "model_number":
+        return indices
+    elif time_scale_type == "linear":
+        val_select = np.linspace(age[indices[0]], age[indices[-1]], len(indices))
+        ind_select = [find_closest(val, age) for val in val_select]
+        return ind_select
+    elif time_scale_type == "log_to_end":
+        time_diff = (age[-1] - age)
+        # Avoid invalid values for log
+        time_diff[time_diff <= 0] = 1e-5
+        logtime = np.log10(time_diff)
+        # Find indices
+        val_select = np.linspace(logtime[indices[0]], logtime[indices[-1]], len(indices))
+        ind_select = [find_closest(val, logtime) for val in val_select]
+        return ind_select
+    else:
+        raise ValueError('Invalid time_type. Choose one of "model_number", "linear", or "log_to_end"')
+
+
+
+
 def save_to_pickle(data_dict, filepath):
     '''Saves a dict into a pickle file'''
-    dbfile = open(filepath, 'ab')
+    # dbfile = open(filepath, 'ab')
+    dbfile = open(filepath, 'wb')
     pickle.dump(data_dict, dbfile)   
     dbfile.close()
 
@@ -34,7 +79,7 @@ def load_from_pickle(filepath):
     return data_dict
 
 def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
-                t_range = -1,\
+                t_range = -1, time_scale_type="log_to_end",\
                 filename_history = None, verbose_timing = False, \
                 profiles=['mass', 'logT', 'logRho', 'he4'], \
                 r_grid_name="mass"):
@@ -81,8 +126,17 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     # Get t_resolution elements from t_grid using these indices:
     _t_grid = m.hist.star_age
 
-    if t_range == -1: _t_indices = np.round(np.linspace(0, len(_t_grid) - 1, t_resolution)).astype(int)
-    else: _t_indices = np.round(np.linspace(t_range[0], t_range[1] - 1, t_resolution)).astype(int)
+    # _t_indices = range(start_ind, end_ind, ind_step)
+    # _t_indices = range(t_range[0], t_range[1], (t_range[0]- t_range[1])/t_resolution))
+    if t_range == -1: 
+        _t_indices = np.round(np.linspace(0, len(_t_grid) - 1, t_resolution)).astype(int)
+    else: 
+        _t_indices = np.round(np.linspace(t_range[0], t_range[1] - 1, t_resolution)).astype(int)
+    _t_indices = rescale_time(_t_indices, m, time_scale_type=time_scale_type)
+    # if t_range == -1: 
+    #     _t_indices = np.round(np.linspace(0, len(_t_grid) - 1, t_resolution)).astype(int)
+    # else: 
+    #     _t_indices = np.round(np.linspace(t_range[0], t_range[1] - 1, t_resolution)).astype(int)
     new_t_grid = _t_grid[_t_indices]
 
     if verbose_timing: print("Timing load mesa file: ", time()-_)
@@ -90,18 +144,22 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     print("Original/new time resolution: ", len(_t_grid), len(new_t_grid))
 
     # Load the Teff data of the star
-    logTeff_values = loadMesaTeffData(m, new_t_grid)
+    # logTeff_values = loadMesaTeffData(m, new_t_grid)
+    logTeff_values = loadMesaTeffData(m, _t_indices)
+
 
     data_array_prof, R_star_from_grid = loadMesaProfile(m , mesa_LOGS_directory, \
                                                     r_resolution = r_resolution,\
                                                     profile_names=profiles, \
-                                                    r_grid_name=r_grid_name, t_grid = new_t_grid)
+                                                    r_grid_name=r_grid_name, t_grid = _t_indices)
     
     return  {\
             "info":"",\
             "MESA_file": mesa_LOGS_directory,\
             "filename_history":filename_history,\
             "r_label": r_grid_name,\
+            "age": new_t_grid,\
+            "t_indices": list(_t_indices),\
             key_DataPrepTulips3D_prof_labels: profiles,\
             key_DataPrepTulips3D_t_resolution: t_resolution, \
             key_DataPrepTulips3D_r_resolution: r_resolution,\
@@ -133,18 +191,18 @@ def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
     _prof = find_profile(m, mesa_LOGS_directory)
     r_grid = _prof.data[r_grid_name][:]
 
-
-
-
-
     # The two output arrays.
     # This will contain the MESA data in the new resolutions
-    data_array = np.zeros((len(profile_names), t_grid.shape[0], r_resolution))
+    data_array = np.zeros((len(profile_names), len(t_grid), r_resolution))
+    # data_array = np.zeros((len(profile_names), t_grid.shape[0], r_resolution))
+
     # This will contain the max Radius at each time index
-    R_star_from_grid = np.zeros((len(profile_names), t_grid.shape[0]))
+    R_star_from_grid = np.zeros((len(profile_names), len(t_grid)))
+    # R_star_from_grid = np.zeros((len(profile_names), t_grid.shape[0]))
 
     for i_prof_name, pname in enumerate(profile_names):
-        for t, age in enumerate(t_grid):
+        for i, t in enumerate(t_grid):
+        # for t, age in enumerate(t_grid):
             if pname == "en":
                 _R_max, _prop = loadMesaEnergyData(m, t, r_resolution)
             else:
@@ -168,8 +226,8 @@ def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
                 _prop = f(_new_r)
                 _R_max = max(_r)
 
-            R_star_from_grid[i_prof_name,t] = _R_max
-            data_array[i_prof_name,t,:] = _prop
+            R_star_from_grid[i_prof_name,i] = _R_max
+            data_array[i_prof_name,i,:] = _prop
 
     return data_array, R_star_from_grid
 
@@ -232,7 +290,8 @@ def loadMesaTeffData(mesa_object, t_grid, verbose_timing=False):
     time_indices = len(sm)
     logTeff_values = []
 
-    for t, age in enumerate(t_grid):
+    for t in t_grid:
+    # for t, age in enumerate(t_grid):
         logTeff_values.append(mesa_object.hist.log_Teff[t])
 
     #data.set_total_property("logTeff", logTeff_values)
