@@ -3,7 +3,7 @@
 
 from setuptools import setup, find_packages
 
-VERSION = '0.0.0a2'
+VERSION = '0.0.0a3'
 DESCRIPTION = 'Tulips3D data prep'
 LONG_DESCRIPTION = ''
 
