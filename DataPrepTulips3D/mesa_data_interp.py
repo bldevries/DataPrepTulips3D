@@ -16,9 +16,15 @@ from scipy.interpolate import interp1d
 # import DataPrepTulips3D as DP
 
 key_DataPrepTulips3D_prof_labels = "prof_labels"
+key_DataPrepTulips3D_chem_elem_labels = "chem_elem_labels"
 key_DataPrepTulips3D_r_resolution = "r_resolution"
 key_DataPrepTulips3D_t_resolution = "t_resolution"
+
+# The data_array (given by DP.load_from_pickle) will contain 
+# the "data_prof_t_r" key. It contains the MESA data in the 
+# resolution (prof_labels, t_resolution, r_resolution)
 key_DataPrepTulips3D_data_prof_t_r = "data_prof_t_r"
+key_DataPrepTulips3D_data_chem_t_r = "data_chem_t_r"
 key_DataPrepTulips3D_data_r_max = "data_r_max"
 
 def save_to_pickle(data_dict, filepath):
@@ -90,7 +96,7 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     logTeff_values = loadMesaTeffData(m, age_indices=_age_indices)
 
 
-    data_array_prof, R_star_from_grid = loadMesaProfile(m , mesa_LOGS_directory, \
+    data_array_prof, chem_array, R_star_from_grid, elem_list = loadMesaProfile(m , mesa_LOGS_directory, \
                                                     r_resolution = r_resolution,\
                                                     profile_names=profiles, \
                                                     r_grid_name=r_grid_name, \
@@ -104,9 +110,11 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
             "age": new_age_grid,\
             "age_indices": list(_age_indices),\
             key_DataPrepTulips3D_prof_labels: profiles,\
+            key_DataPrepTulips3D_chem_elem_labels: elem_list,\
             key_DataPrepTulips3D_t_resolution: t_resolution, \
             key_DataPrepTulips3D_r_resolution: r_resolution,\
             key_DataPrepTulips3D_data_prof_t_r: data_array_prof,\
+            key_DataPrepTulips3D_data_chem_t_r: chem_array,\
             key_DataPrepTulips3D_data_r_max: R_star_from_grid,\
             "data_t": {"logTeff": logTeff_values}\
             }
@@ -123,6 +131,22 @@ def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
     
     _prof = find_profile(m, mesa_LOGS_directory)
     r_grid = _prof.data[r_grid_name][:]
+
+    chem_prof = True
+    if chem_prof:
+        p = mp.plot(rcparams_fixed=False)
+        elem_list = p._listAbun(_prof)
+        # Remove "neut", "prot", and ionized hydrogen from the list of isotopes
+        if "neut" in elem_list:
+            elem_list.remove("neut")
+        if "prot" in elem_list:
+            elem_list.remove("prot")
+        if "h1_1" in elem_list:
+            elem_list.remove("h1_1")
+
+
+    # DOING THE PROFILES
+    print("Working on profile data")
 
     # This will contain the MESA data in the new resolutions
     data_array = np.zeros((len(profile_names), len(age_indices), r_resolution))
@@ -158,7 +182,47 @@ def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
             R_star_from_grid[i_prof_name,i] = _R_max
             data_array[i_prof_name,i,:] = _prop
 
-    return data_array, R_star_from_grid
+    
+    # DOING THE CHEM
+    print("Working on Chem. abundance data")
+
+    # This will contain the MESA data in the new resolutions
+    chem_array = np.zeros((len(elem_list), len(age_indices), r_resolution))
+
+    # This will contain the max Radius at each time index
+    # R_star_from_grid = np.zeros((len(elem_list), len(age_indices)))
+
+    for i_prof_name, pname in enumerate(elem_list):
+        for i, t in enumerate(age_indices):
+            prof = find_profile(m, mesa_LOGS_directory, time_ind=t)
+            _r = prof.data[r_grid_name][:]
+            _prop = prof.data[pname][:]
+
+            # If the order is descending, flip the arrays
+            if _r[0] > _r[-1]: 
+                _r = np.flip(_r)
+                _prop = np.flip(_prop)
+            # If there is no element at r=0.0, add it
+            if _r[0] != 0.: 
+                _r = np.concatenate([[0.],_r])
+                _prop = np.concatenate([[_prop[0]],_prop])
+
+            _new_r = np.linspace(min(_r), max(_r), num=r_resolution)
+
+            # print(i_prof_name, prop.shape)
+            f = interp1d(_r, _prop, bounds_error=False, fill_value=np.nan)
+            _prop = f(_new_r)
+            _R_max = max(_r)
+
+            # R_star_from_grid[i_prof_name,i] = _R_max
+            chem_array[i_prof_name,i,:] = _prop
+
+    
+
+
+
+
+    return data_array, chem_array, R_star_from_grid, elem_list
 
 
 
