@@ -61,7 +61,7 @@ def save_to_texture(d, directory):
             d_2d = np.reshape(d_2d, (1, -1, 4))
             # Savind the texture:
             save_texture(d_2d, os.path.join(prof_directory, filename_full))#save_colormapped_texture
-    
+
     # Now save the chemical profiles, which depend on time, radius and theta
     # Texture dimensions: nr_radial_points x theta_points
     # File dimension: time index
@@ -715,7 +715,6 @@ def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
             R_star_from_grid_Rsun[i_prof_name,i] = _R_max_Rsun
             data_array[i_prof_name,i,:] = _prop
 
-    
     # DOING THE CHEM
     print("Working on Chem. abundance data")
 
