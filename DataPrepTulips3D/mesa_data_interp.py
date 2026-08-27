@@ -328,7 +328,7 @@ def convertMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
                     filename_history = None, verbose_timing = False, \
                     profiles=[], r_grid_name="mass", is_binary=False, binary_nr=1,\
                     n_theta_rochelobe=128, n_phi_rochelobe=24,\
-                    n_x_potential=48, n_y_potential=48, potential_softening=0.1):
+                    n_x_potential=64, n_y_potential=64, potential_softening=0.1):
 
     # binary_nr = 1 or 2
 
@@ -362,7 +362,7 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
                 filename_history = None, verbose_timing = False, \
                 profiles=[], r_grid_name="mass",\
                 n_theta_rochelobe=24, n_phi_rochelobe=24,\
-                n_x_potential=48, n_y_potential=48, potential_softening=0.1):
+                n_x_potential=64, n_y_potential=64, potential_softening=0.1):
     """
     Loads MESA data, sets it to a specified resolution and saves it 
     into a dictionairy. All values are set to the same grid (given by
@@ -428,6 +428,56 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     _data_t = loadMesaHistory(m, age_indices=_age_indices)
 
     _data_t.update({"logTeff": logTeff_values, "logTeff_color": logTeff_colors, "Rmax": R_star_from_grid[0,:], "Rmax_Rsun": R_star_from_grid_Rsun[0,:], "age": new_age_grid})
+
+    # Surface rotation rate (Ben: visualize the stars' rotation as an arrow
+    # above each star, longer when rotation is faster, absent entirely when
+    # there's no rotation data). Not a history column in this project's MESA
+    # output (loadMesaHistory's own "omega"/"v_rot" entries above are a dead
+    # code path - see tulips3d-rotation-data-investigation memory) - the
+    # only real rotation data is the PROFILE-level 'omega' column (rad/s),
+    # confirmed present with real, evolving values whenever rotation_flag
+    # was on for this run. Reduced to one scalar-per-time value (the
+    # surface value) rather than baked as a full per-radius texture like
+    # 'mass'/'logT'/etc., since only "how fast is this star spinning right
+    # now" is needed for an arrow's length - see loadMesaProfileScalarSurface.
+    print("Loading rotation (profile 'omega', surface value)")
+    omega_surf = loadMesaProfileScalarSurface(m, mesa_LOGS_directory, "omega", _age_indices)
+    if omega_surf is not None:
+        _data_t.update({"omega_surf": omega_surf})
+        print("  Added omega_surf (surface angular velocity, rad/s)")
+
+    # Instantaneous orbital angular velocity (Ben: an option to visually
+    # rotate the whole binary system around the CM over time, following the
+    # true orbital motion). Circular-orbit assumption (matches every real
+    # run in this project - "eccentricity" has never been found as an
+    # actual history column, i.e. loadMesaHistory's own eccentricity entry
+    # is always absent here, same dead-column situation as its omega/
+    # v_rot/j_tot entries): omega_orb = 2*pi/period.
+    #
+    # NOT integrated over real elapsed time here (an earlier version did
+    # this, producing a cumulative phase in radians) - tried and rejected:
+    # since star_age spans the star's whole main-sequence lifetime while
+    # the interesting mass-transfer phase is only its last sliver, the
+    # log_to_end-resampled time grid jumps by TENS OF MILLIONS OF YEARS
+    # between the first couple of frames, over which the system genuinely
+    # completes on the order of BILLIONS of real orbits at an ~8-day
+    # period - numerically fine (float64 handles it) but visually useless:
+    # animating smoothly through those early frames would show a chaotic
+    # blur of accumulated rotation baked into one small Time Index step.
+    # Ben's fix: don't integrate real time at all - store just the raw,
+    # per-frame instantaneous rate here (baked/normalized to [0,1] like any
+    # other data_t scalar by the existing save_to_texture generic branch,
+    # no special handling needed), and let the ADDON accumulate visible
+    # rotation as a function of TIME INDEX STEPS instead of real seconds -
+    # scaled by this shape (so the system visibly speeds up/slows down in
+    # sync with the true relative orbital speed) but with an
+    # artist-controlled overall rate (rotations per Time Index step) - see
+    # generate_nodes.add_orbital_rotation_driver in the TULIPS-3D repo.
+    if "period_days" in _data_t:
+        period_sec = _data_t["period_days"] * 86400.0
+        omega_orb = 2. * np.pi / period_sec  # rad/s
+        _data_t.update({"omega_orb": omega_orb})
+        print("  Added omega_orb (instantaneous orbital angular velocity, rad/s)")
 
     # Roche lobe geometry (physically-accurate equipotential surface, not
     # just the Eggleton-formula scalar MESA already gives us in rl_1/rl_2) -
@@ -528,14 +578,53 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
         # Computed HERE (before x_range/y_range below) using a generous,
         # independent search domain - not the final display domain, which
         # is only known once the rings' own extent is known (a chicken-and-
-        # egg problem otherwise). n_theta_equipot=96 (up from an initial 48,
-        # Ben: "increase the amount of points used for the L1/2/3 curves so
-        # that they are smoother") - the underlying boundary trace already
-        # has much finer (grid-resolution, n_grid=140) detail than either
-        # point count resamples to, so this is a pure smoothness win, not
-        # limited by the trace itself.
-        n_theta_equipot = 200
-        backoff_frac = 0.03  # small: stays close to the true critical value while avoiding its exact (degenerate) pinch
+        # egg problem otherwise).
+        #
+        # n_theta_equipot/backoff_frac tuned together (Ben: "the other two
+        # [equipotential lines] are not going through L2 and L3... it would
+        # be nice to show the equipotential lines that include L2 and L3").
+        # Verified empirically (not just by inspection) which of the two
+        # actually limits how close the ring can get to the true L2/L3
+        # point: contrary to the initial assumption, it's n_theta - the
+        # ANGULAR sample density around the loop - not n_grid (the
+        # flood-fill's own resolution). At the previous n_theta=200,
+        # min-distance-to-L2 stayed stuck around ~0.03-0.06 (separation
+        # units) no matter how far backoff_frac was pushed down or n_grid
+        # was raised, because no sampled point happened to land near the
+        # narrow neck; raising n_theta to 2000 (cheap - a few tens of ms
+        # per frame even at n_grid's own default 320) let a real sample
+        # point land within ~0.005-0.01 of the true point once backoff_frac
+        # was also tightened. Can't reach exactly 0 - see this block's own
+        # first comment/equipotential_boundary_xy's docstring: the EXACT
+        # critical potential through a saddle point (L2/L3, same as L1) is
+        # a genuinely self-intersecting/degenerate contour, not a simple
+        # closed loop a flood-fill boundary trace can represent - so this
+        # is "as close as numerically well-posed", not a remaining tuning
+        # gap.
+        n_theta_equipot = 2000
+        backoff_frac = 0.001  # small: stays close to the true critical value while avoiding its exact (degenerate) pinch
+        # Ben, after the n_theta/backoff tightening above: "the resolution of
+        # the equipotentials going through L2 and L3 is very low" - this is a
+        # SEPARATE issue from the L2/L3-proximity one above: the ring's own
+        # SHAPE is visibly jagged/staircased on screen (equipotential_boundary_xy's
+        # docstring already covers why: _moore_boundary_trace walks pixel-to-
+        # pixel on the flood-filled grid, so its raw output is grid-quantized).
+        # Measured directly (roche_lobe module, small-scale testing):
+        # raising n_grid past its default 320 barely helps once >~640 (the
+        # per-point deviation from a heavily-smoothed reference plateaus
+        # around 640, doesn't improve further even at 1920 - it's not a
+        # spatial-grid-resolution problem, arc-length resampling to n_theta
+        # points doesn't fix a staircase either, exactly as the docstring
+        # already notes). smooth_window (the circular moving-average) is the
+        # real lever: raising it from the default 9 to 41 roughly halves the
+        # worst-case per-point deviation. Going much higher (81-150) smooths
+        # further but starts eating back the L2/L3-proximity gain from the
+        # n_theta/backoff_frac tightening just above (min-distance-to-L2
+        # grows ~2-4x at smooth_window=41 vs. 9, tested across q=0.3-5.0) -
+        # 41 was chosen as the point past which returns diminish while still
+        # staying well inside the tightened band (comfortably tighter than
+        # the pre-tightening baseline of ~0.03-0.06).
+        smooth_window_equipot = 41
         ring_search_pad = 1.0  # generous margin beyond x_l2/x_l3 for the search grid itself (independent of the final display x_pad below)
         ring_domain_x = (float(x_l3.min() - ring_search_pad), float(x_l2.max() + ring_search_pad))
         ring_domain_y = (-3.0, 3.0)  # generous fixed range - verified safe across q=0.1-10 (this project's actual MESA range)
@@ -549,13 +638,15 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
             phi_target_l3 = phi_l3_true[t] - backoff_frac * abs(phi_l3_true[t] - phi_l1_true[t])
             try:
                 ring_l2[t] = roche_lobe.equipotential_boundary_xy(
-                    q1[t], phi_target_l2, ring_domain_x, ring_domain_y, seed_xy, n_theta=n_theta_equipot)
+                    q1[t], phi_target_l2, ring_domain_x, ring_domain_y, seed_xy,
+                    n_theta=n_theta_equipot, smooth_window=smooth_window_equipot)
             except ValueError as e:
                 print(f"  X L2 ring failed at frame {t} ({e}) - reusing previous frame")
                 ring_l2[t] = ring_l2[t-1] if t > 0 else 0.
             try:
                 ring_l3[t] = roche_lobe.equipotential_boundary_xy(
-                    q1[t], phi_target_l3, ring_domain_x, ring_domain_y, seed_xy, n_theta=n_theta_equipot)
+                    q1[t], phi_target_l3, ring_domain_x, ring_domain_y, seed_xy,
+                    n_theta=n_theta_equipot, smooth_window=smooth_window_equipot)
             except ValueError as e:
                 print(f"  X L3 ring failed at frame {t} ({e}) - reusing previous frame")
                 ring_l3[t] = ring_l3[t-1] if t > 0 else 0.
@@ -640,16 +731,61 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
         })
     return result
 
+def _find_profile(m, mesa_LOGS_directory, time_ind=0):
+    '''Loads (into m.prof, mesaPlot's own shared-state convention) whichever
+    saved MESA profile is closest to age_indices' time_ind-th history row,
+    and returns it. Module-level (not a closure) so both loadMesaProfile and
+    loadMesaProfileScalarSurface can share the exact same profile-lookup
+    behavior.'''
+    model_number = m.hist.model_number[time_ind]
+    m.loadProfile(num=model_number, f=mesa_LOGS_directory, silent=True)
+    return m.prof
+
+
+def loadMesaProfileScalarSurface(m, mesa_LOGS_directory, column_name, age_indices):
+    '''Reads one profile column's SURFACE value (zone=1, i.e. index 0 in
+    MESA's own raw profile ordering - profiles list the surface first and
+    the center last, before any radius-ascending flip like loadMesaProfile
+    does for its r-grid interpolation) at each of the given age_indices.
+    Returns a plain 1D array of length len(age_indices) - NOT a full
+    per-radius grid like loadMesaProfile - suitable for storing directly in
+    a data_t-style scalar-per-time dict (e.g. for a quantity that's more
+    naturally "one representative value per timestep" than a whole radial
+    profile, like a star's surface rotation rate).
+
+    Returns None (with an explanatory print) if column_name isn't present
+    in the profile data at all, or if every value comes out non-positive
+    (e.g. rotation physics was off for this run, or the star never actually
+    spun up) - so save_to_texture's plain max-normalization doesn't divide
+    by zero. Callers should only add the result to data_t when it's not
+    None, exactly mirroring loadMesaHistory's "column not found -> key
+    simply absent, no placeholder" idiom for optional data.'''
+    _prof = _find_profile(m, mesa_LOGS_directory, time_ind=age_indices[0])
+    if column_name not in _prof.data.dtype.names:
+        print(f"  X did not find profile column '{column_name}' - skipping "
+              f"(rotation physics was probably off for this run)")
+        return None
+
+    values = np.zeros(len(age_indices))
+    for i, t in enumerate(age_indices):
+        prof = _find_profile(m, mesa_LOGS_directory, time_ind=t)
+        values[i] = prof.data[column_name][0]  # zone 1 = surface
+
+    if np.max(values) <= 0:
+        print(f"  X profile column '{column_name}' is all zero/negative - "
+              f"skipping (star isn't actually rotating in this run)")
+        return None
+
+    return values
+
+
 def loadMesaProfile(m, mesa_LOGS_directory, profile_names, \
-                    r_resolution, 
+                    r_resolution,
                     r_grid_name, age_indices):
     """Reads in a profile data from a mesa file"""
 
-    def find_profile(m, mesa_LOGS_directory, time_ind=0):
-        model_number = m.hist.model_number[time_ind]
-        m.loadProfile(num=model_number, f=mesa_LOGS_directory, silent=True)
-        return m.prof
-    
+    find_profile = _find_profile
+
     _prof = find_profile(m, mesa_LOGS_directory)
     r_grid = _prof.data[r_grid_name][:]
     print("Profile data keys:", _prof.data.dtype.names)
