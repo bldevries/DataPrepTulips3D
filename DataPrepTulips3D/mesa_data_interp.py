@@ -14,6 +14,7 @@ from scipy.interpolate import interp1d
 from . import blackbody
 from . import colormodels
 from . import roche_lobe
+from . import mass_transfer_particles
 
 # import Data1D.Data1D
 from DataPrepTulips3D.output_formats import *
@@ -201,6 +202,50 @@ def save_to_texture(d, directory):
         print(f"  Baked equipotential ring: {subdir_name} (x_absmax={x_absmax:.4f}, "
               f"y_absmax={y_absmax:.4f} Rsun, {ring_array.shape[0]} frames, {n_theta_ring} points)")
 
+    # Now save the mass-transfer-stream particle pool (see
+    # loadMesaData/mass_transfer_particles.py) - one EXR per POOL KEYFRAME
+    # (not per resampled MESA frame - far fewer of these, see that
+    # computation's own comment), each packing that keyframe's whole
+    # (n_particles, n_local_steps+1) trajectory set as R=x, G=y, B=z
+    # (independently abs-max normalized, same reasoning as the L2/L3 rings
+    # above) and A = the alive mask (1 while flying, 0 once
+    # captured/fell-back/escaped) - so the addon can cull a particle once
+    # it's dead instead of it visibly freezing in place at its death
+    # position.
+    if key.data_particle_pool_trajectory in d:
+        pool_traj = d[key.data_particle_pool_trajectory]  # (n_keyframes, n_particles, n_local_steps+1, 3)
+        pool_alive = d.pop("_particle_pool_alive_mask")   # (n_keyframes, n_particles, n_local_steps+1)
+        n_keyframes, n_particles_pool, n_steps_plus_1, _ = pool_traj.shape
+        x_absmax = float(np.max(np.abs(pool_traj[:, :, :, 0])))
+        y_absmax = float(np.max(np.abs(pool_traj[:, :, :, 1])))
+        z_absmax = float(np.max(np.abs(pool_traj[:, :, :, 2]))) or 1.  # z can be ~0 for a purely in-plane launch
+        pool_directory = os.path.join(directory, "particle_pool")
+        os.makedirs(pool_directory, exist_ok=True)
+        for kf in range(n_keyframes):
+            d_2d = np.zeros((n_particles_pool, n_steps_plus_1, 4))
+            d_2d[:, :, 0] = pool_traj[kf, :, :, 0] / x_absmax
+            d_2d[:, :, 1] = pool_traj[kf, :, :, 1] / y_absmax
+            d_2d[:, :, 2] = pool_traj[kf, :, :, 2] / z_absmax
+            d_2d[:, :, 3] = pool_alive[kf, :, :]
+            filename_full = f"particle_pool_nrP{n_particles_pool}_nrStep{n_steps_plus_1}_.{kf}"
+            save_texture(d_2d, os.path.join(pool_directory, filename_full))
+        d[key.dir_structure].update({
+            key.particle_pool_filename: {
+                "filename": f"particle_pool/particle_pool_nrP{n_particles_pool}_nrStep{n_steps_plus_1}_.0.exr",
+                "x_max_value": x_absmax,
+                "y_max_value": y_absmax,
+                "z_max_value": z_absmax,
+                "n_particles": n_particles_pool,
+                "n_local_steps": n_steps_plus_1 - 1,
+                "n_keyframes": n_keyframes,
+                "keyframe_indices": d[key.particle_pool_keyframe_indices],  # already a plain list - see loadMesaData's own .tolist()
+                "local_dt": d[key.particle_pool_local_dt],
+                "launch_speed": d[key.particle_pool_launch_speed],
+            }
+        })
+        print(f"  Baked particle pool: {n_keyframes} keyframes, {n_particles_pool} particles/keyframe, "
+              f"{n_steps_plus_1 - 1} local steps")
+
     # Now save all data only dependent on time
     data_dir_dict = {}
     for index, (_key, data) in enumerate(d[key.data_t].items()):
@@ -219,16 +264,44 @@ def save_to_texture(d, directory):
         elif _key == "logTeff_color":
             print("Colored already done")
         elif _key in ["log_abs_mdot", "lg_mstar_dot_1", "lg_mstar_dot_2"]:
+            # These are log10 of a mass-loss/transfer rate, so "should"
+            # always be negative (any realistic rate is << 1 Msun/yr) - but
+            # this assumption genuinely breaks at a run's very final rows
+            # when time_scale_type="model_number" at NATIVE resolution
+            # (t_resolution == t_resolution_orig, i.e. every raw row kept,
+            # no resampling/skipping at all): confirmed directly against
+            # binary_spin_contact_8.4days_5Msun_3.125Msun_v2's own raw
+            # history1.data - lg_mstar_dot_1 genuinely reads ~+2.3 to +2.4
+            # (i.e. an absurd ~250+ Msun/yr) on the last several (repeated,
+            # retry-duplicated) rows before the run's own min_timestep_limit
+            # termination - a real numerical artifact of the solver failing
+            # near the very end, not a bug in THIS code, but real enough
+            # data that crashing the entire dataprep run over it is too
+            # fragile ("linear"/"log_to_end" scaling never hit this because
+            # their own resampling/find_closest search happens to land
+            # short of these exact final rows - "model_number" at native
+            # resolution keeps literally every row, including these).
+            #
+            # Fixed the same way L1_dist_from_CM/L2_dist_from_CM below
+            # handle genuinely sign-varying data: abs-max normalize with
+            # the SIGN PRESERVED (not forced negative), storing a positive
+            # max_value - Blender's own reconstruction (sampled*max_value)
+            # is already agnostic to whether max_value is positive or
+            # negative, so this needs no downstream/addon-side change at
+            # all, just a more robust encoding here.
+            d_absmax = float(np.max(np.abs(data)))
             if not np.all(data < 0.):
-                raise ValueError(f"Not all massloss rates have a negative exponent! Check your code.")
-
-            # We make all values positive before normalizing, not a nice thing to do!
-            d_2d, d_max = set_1D_data_to_R_channel(abs(data))
-            d_max = -1* d_max
-            filename_full = f"data_{round(d_max,4)}_"+_key
+                n_bad = int(np.sum(data >= 0.))
+                print(f"  ! {n_bad} value(s) of '{_key}' are >= 0 (expected always-negative log-rate) - "
+                      f"likely a solver artifact right at this run's own termination, not resampling this "
+                      f"code did - storing with sign preserved (abs-max encoding) instead of crashing.")
+            d_2d = np.zeros((1, len(data), 4))
+            d_2d[0, :, 0] = data / d_absmax
+            d_2d[0, :, 3] = 1.
+            filename_full = f"data_{round(d_absmax,4)}_"+_key
 
             save_texture(d_2d, os.path.join(directory, filename_full))
-            data_dir_dict.update({_key: {"filename":filename_full+".exr", "max_value":d_max}})
+            data_dir_dict.update({_key: {"filename":filename_full+".exr", "max_value":d_absmax}})
         elif _key in ("phi_l1_softened", "phi_l2_softened", "phi_l3_softened"):
             # Uniformly negative (like the main potential grid) - NOT
             # sign-swinging like L1_dist_from_CM, but the generic branch's
@@ -679,12 +752,56 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
             q1, x_range, y_range, n_x=n_x_potential, n_y=n_y_potential, softening=potential_softening)[0]
         data_rochelobe_potential_grid = potential_grid  # dimensionless (G(M1+M2)=1, a=1) - NOT yet scaled to physical units
         print(f"  Added Roche potential surface grid (x_range={x_range}, y_range={y_range})")
+
+        # Mass-transfer-stream particle pool (Ben: "I want the donor to
+        # emit particles towards the accretor... governed by the potential
+        # you calculated" - then: "start with a slow launch seed so that
+        # particles get captured (through a rosette) onto the accretor" -
+        # then, after the rosette-producing Coriolis term turned out to
+        # make capture highly q-sensitive: "let's take out the Coriolis
+        # force, that should simplify things. The first thing I want is to
+        # show the mass transfer between the stars"). Corotating-frame
+        # trajectories under gravity alone by default (include_coriolis
+        # left at its own default, False) - see mass_transfer_particles.py's
+        # own module docstring for the full reasoning/history. Baked at a
+        # small number of representative "pool keyframes" (n_pool_keyframes
+        # below), NOT one full trajectory rebake per resampled MESA frame -
+        # q only drifts slowly frame-to-frame (mass transfer is gradual),
+        # so a per-frame rebake at this project's usual t_resolution~1000
+        # would cost several GB for no visual benefit. The particle COUNT
+        # actually visible at any moment is meant to track mdot at full
+        # existing time resolution instead (a live, Blender-side thinning
+        # of this same baked pool - see
+        # mass_transfer_particles.bake_particle_pool's own docstring) -
+        # that's the part that actually needs every frame, not the
+        # trajectory shape itself. dt/n_local_steps/capture_radius all left
+        # at bake_particle_pool's own (validated) defaults, not overridden
+        # here.
+        n_pool_keyframes = min(30, n_frames_binary)
+        pool_keyframe_indices = np.unique(np.linspace(0, n_frames_binary - 1, n_pool_keyframes).astype(int))
+        pool = mass_transfer_particles.bake_particle_pool(q1[pool_keyframe_indices], n_particles_per_frame=30, seed=0)
+        # Rsun, same per-keyframe separation scaling as the L2/L3 rings above
+        # (dimensionless CR3BP units -> physical units, one sep value per
+        # pool keyframe since sep itself drifts slowly too over the run).
+        data_particle_pool_trajectory = pool["trajectory"] * sep[pool_keyframe_indices][:, None, None, None]
+        # alive mask (1 while flying, 0 once captured/fell back/escaped) -
+        # baked into the texture's alpha channel at save time, not stored
+        # separately, but computed here from alive_until/n_local_steps.
+        n_local_steps = pool["trajectory"].shape[2] - 1
+        step_idx = np.arange(n_local_steps + 1)[None, None, :]
+        data_particle_pool_alive_mask = (step_idx <= pool["alive_until"][:, :, None]).astype(np.float32)
+        print(f"  Baked mass-transfer particle pool ({len(pool_keyframe_indices)} pool keyframes, "
+              f"{pool['trajectory'].shape[1]} particles/keyframe, {n_local_steps} local steps, "
+              f"{100.*(pool['death_reason']=='captured').mean():.0f}% captured)")
     else:
         print("  X Skipped Roche lobe geometry (not enough binary data present)")
         data_rochelobe_potential_grid = None
         data_rochelobe_l2_ring = None
         data_rochelobe_l3_ring = None
         x_range, y_range = None, None
+        data_particle_pool_trajectory = None
+        data_particle_pool_alive_mask = None
+        pool_keyframe_indices = None
 
     print(_age_indices)
     print(type(_age_indices))
@@ -728,6 +845,23 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
             key.data_rochelobe_l2_ring: data_rochelobe_l2_ring,
             key.data_rochelobe_l3_ring: data_rochelobe_l3_ring,
             key.nr_theta_points_equipotential: n_theta_equipot,
+        })
+    if data_particle_pool_trajectory is not None:
+        result.update({
+            key.data_particle_pool_trajectory: data_particle_pool_trajectory,
+            "_particle_pool_alive_mask": data_particle_pool_alive_mask,  # internal-only, not baked directly - see save_to_texture
+            # .tolist() (not the raw int64 array) - the addon assigns every
+            # top-level key as a Blender custom ID-property
+            # (Object.__setitem__), and a bare numpy INTEGER array hits a
+            # different (untested-by-any-other-key-in-this-project, since
+            # every other baked array here is float64) code path there that
+            # raises "numpy.int64 has no len()" - a plain list of native
+            # Python ints sidesteps it entirely, same as "age_indices" above.
+            key.particle_pool_keyframe_indices: pool_keyframe_indices.tolist(),
+            key.particle_pool_n_particles: data_particle_pool_trajectory.shape[1],
+            key.particle_pool_n_local_steps: n_local_steps,
+            key.particle_pool_local_dt: pool["local_dt"],
+            key.particle_pool_launch_speed: mass_transfer_particles.DEFAULT_LAUNCH_SPEED,
         })
     return result
 

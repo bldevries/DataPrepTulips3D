@@ -62,6 +62,27 @@ data_rochelobe_l2_ring = "data_rochelobe_l2_ring"
 data_rochelobe_l3_ring = "data_rochelobe_l3_ring"
 nr_theta_points_equipotential = "nr_Th_equipot"
 
+# Mass-transfer-stream particle pool (real test-particle trajectories -
+# gravity + Coriolis - integrated in DataPrepTulips3D.mass_transfer_particles,
+# launched from L1 toward star 2/the companion). Baked at a small number of
+# representative "pool keyframes" spread across the run (NOT one pool per
+# resampled MESA frame - q only drifts slowly, so a full rebake at every
+# frame would cost several GB for no visual benefit; see
+# mass_transfer_particles.bake_particle_pool's own docstring), each frame's
+# own trajectory pool is (n_particles, n_local_steps+1, 3), Rsun, packed as
+# one EXR image per keyframe (R=x, G=y, B=z, A=1-while-alive/0-after-death -
+# so Blender can cull a particle once it's captured/escaped instead of it
+# freezing in place). particle_pool_keyframe_indices are the ACTUAL
+# resampled-MESA-frame indices each pool keyframe corresponds to, so the
+# addon can pick whichever pool keyframe is nearest the frame currently
+# being displayed.
+data_particle_pool_trajectory = "data_particle_pool_trajectory"
+particle_pool_keyframe_indices = "particle_pool_keyframe_indices"
+particle_pool_n_particles = "particle_pool_n_particles"
+particle_pool_n_local_steps = "particle_pool_n_local_steps"
+particle_pool_local_dt = "particle_pool_local_dt"
+particle_pool_launch_speed = "particle_pool_launch_speed"
+
 dir_structure = "dir_structure"
 texture_dir = "texture_dir"
 data_t_r_filename = "dir_structure_data_t_r_filename"
@@ -72,6 +93,7 @@ rochelobe_shape_filename_2 = "dir_structure_rochelobe_shape_filename_2"
 rochelobe_potential_filename = "dir_structure_rochelobe_potential_filename"
 rochelobe_l2_ring_filename = "dir_structure_rochelobe_l2_ring_filename"
 rochelobe_l3_ring_filename = "dir_structure_rochelobe_l3_ring_filename"
+particle_pool_filename = "dir_structure_particle_pool_filename"
 
 is_binary = "is_binary"
 binary_nr = "binary_nr"
