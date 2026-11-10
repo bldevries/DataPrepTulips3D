@@ -15,6 +15,8 @@ from . import blackbody
 from . import colormodels
 from . import roche_lobe
 from . import mass_transfer_particles
+from . import core_burning
+from . import web_export
 
 # import Data1D.Data1D
 from DataPrepTulips3D.output_formats import *
@@ -401,7 +403,8 @@ def convertMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
                     filename_history = None, verbose_timing = False, \
                     profiles=[], r_grid_name="mass", is_binary=False, binary_nr=1,\
                     n_theta_rochelobe=128, n_phi_rochelobe=24,\
-                    n_x_potential=64, n_y_potential=64, potential_softening=0.1):
+                    n_x_potential=64, n_y_potential=64, potential_softening=0.1,\
+                    export_web_bundle=True, web_bundle_filename=None):
 
     # binary_nr = 1 or 2
 
@@ -409,7 +412,7 @@ def convertMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
 
     if os.path.isfile(pickle_file):
         print("Dir exists, doing nothing")
-        return load_from_pickle(pickle_file)
+        d = load_from_pickle(pickle_file)
     else:
         d = loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
                         time_scale_type,\
@@ -428,7 +431,25 @@ def convertMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
 
         save_to_pickle(d, pickle_file)
 
-        return d
+    # Besides the Blender-addon output above (pickle + EXR textures),
+    # also write the same data out as a .tulips3dweb bundle for the
+    # TULIPS-3D-WEB browser viewer - see web_export.py's own docstring for
+    # why this is a separate, much smaller format rather than shipping the
+    # pickle/EXR directly. Guarded by its own file-exists check (independent
+    # of the pickle_file guard above) so re-running convertMesaData() on a
+    # dataset that was prepped BEFORE this feature existed still backfills
+    # the bundle from the already-loaded pickle, without needing to redo
+    # any of the (expensive) MESA parsing/resampling/Roche-lobe work above.
+    if export_web_bundle:
+        if web_bundle_filename is None:
+            web_bundle_filename = os.path.splitext(pickle_filename)[0] + ".tulips3dweb"
+        web_bundle_path = os.path.join(save_to_dir, web_bundle_filename)
+        if os.path.isfile(web_bundle_path):
+            print("Web bundle exists, doing nothing")
+        else:
+            web_export.export_for_web_dict(d, web_bundle_path)
+
+    return d
 
 def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
                 time_scale_type="log_to_end",\
@@ -501,6 +522,30 @@ def loadMesaData(mesa_LOGS_directory, t_resolution, r_resolution,\
     _data_t = loadMesaHistory(m, age_indices=_age_indices)
 
     _data_t.update({"logTeff": logTeff_values, "logTeff_color": logTeff_colors, "Rmax": R_star_from_grid[0,:], "Rmax_Rsun": R_star_from_grid_Rsun[0,:], "age": new_age_grid})
+
+    # Core burning stage (Ben: "MESA tracks the core temperature and
+    # density and it plots this showing which type of burning is
+    # happening (H, He, C and O). Could you also extract this core
+    # burning information from MESA models? Could you add this to the
+    # prepped data?") - classified from this star's own core T/Rho
+    # against the same fixed ignition-boundary curves MESA's own pgstar
+    # TRho_Profile plot draws - see core_burning.py's own docstring for
+    # the full derivation. Two possible column names for the exact same
+    # quantity (confirmed identical values directly) - not every MESA
+    # run's own history_columns.list includes both; prefer the more
+    # readable "log_center_*" but fall back to "log_cntr_*" (confirmed
+    # missing entirely for binary_norot_15days_12Msun_10Msun, whose own
+    # history_columns.list only has the abbreviated spelling).
+    _T_key = "log_center_T" if "log_center_T" in _data_t else "log_cntr_T"
+    _Rho_key = "log_center_Rho" if "log_center_Rho" in _data_t else "log_cntr_Rho"
+    if _T_key in _data_t and _Rho_key in _data_t:
+        _data_t.update({
+            "core_burning_stage": core_burning.classify_core_burning(
+                _data_t[_T_key], _data_t[_Rho_key])
+        })
+        print(f"  Added core_burning_stage (from {_T_key}/{_Rho_key})")
+    else:
+        print("  X did not find log_center_T/log_cntr_T (or Rho) - core_burning_stage not added")
 
     # Surface rotation rate (Ben: visualize the stars' rotation as an arrow
     # above each star, longer when rotation is faster, absent entirely when
@@ -1136,6 +1181,15 @@ def loadMesaHistory(mesa_object, age_indices):
     labels = ["omega", "v_rot", "j_tot"]
     labels += ["period_days", "binary_separation", "eccentricity", "v_orb_1", "v_orb_2", "rl_1", "rl_2", "log_abs_mdot", "lg_mstar_dot_1", "lg_mstar_dot_2"]#, "star_1_radius", "star_2_radius"]
     labels += ["star_1_mass", "star_2_mass"]  # needed for the Roche-lobe mass ratio (roche_lobe.py)
+    labels += ["log_L"]  # luminosity, needed for the HR diagram (log_L vs logTeff - see TULIPS-3D-WEB's hrDiagram.js)
+    # needed for core_burning.classify_core_burning below - two aliases
+    # for the exact same quantity (confirmed identical values directly),
+    # since not every MESA run's own history_columns.list includes both:
+    # single_11Msun's does, but binary_norot_15days_12Msun_10Msun's own
+    # (inherited from the create_binary_with_rotation work directory
+    # template) only has the abbreviated log_cntr_* spelling - whichever
+    # is actually present gets picked up below by loadMesaData.
+    labels += ["log_center_T", "log_center_Rho", "log_cntr_T", "log_cntr_Rho"]
 
     sm = mesa_object.hist.star_mass
     time_indices = len(sm)

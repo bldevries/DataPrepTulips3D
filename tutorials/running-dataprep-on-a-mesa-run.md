@@ -64,20 +64,53 @@ d = convertMesaData(
   the run - see section 4.
 
 This single call reads the history + profile data, computes all the
-derived quantities the addon visualizes (Teff coloring, chemical
-composition, and - for a binary - Roche lobe shapes, the Roche potential
+derived quantities the addon (and the web viewer - see below) visualize
+(Teff coloring, chemical composition, luminosity, core temperature/
+density, and - for a binary - Roche lobe shapes, the Roche potential
 landscape, mass-transfer rate, L1/L2/L3 points), and writes out:
 
 - `<save_to_dir>/MESA_data_dict.pkl` - the actual data, pickled.
 - `<save_to_dir>/textures/` - the same data, ALSO baked into `.exr`
   images (one per quantity, one pixel column per time step) - this is
   the form the Blender addon actually samples at render time.
+- `<save_to_dir>/MESA_data_dict.tulips3dweb` - the same data again, this
+  time repackaged for the `TULIPS-3D-WEB` browser viewer (a separate,
+  Blender-free app in the `TULIPS-3D-WEB` repo) - see
+  `DataPrepTulips3D.web_export` for the format. Written automatically;
+  pass `export_web_bundle=False` to `convertMesaData` to skip it.
+
+  If you run `convertMesaData` for more than one `time_scale_type` (or,
+  for a binary, both stars) into sibling `save_to_dir`s - the normal
+  pattern, see section 4 below - call `web_export.export_for_web_combined()`
+  once afterwards (or the convenience `combine_from_prepped_dirs()`, which
+  loads straight from each `save_to_dir`'s own pickle) to also write ONE
+  combined `.tulips3dweb` bundle covering all of them, directly in the
+  shared parent `prepped_data/` directory. That combined bundle is what a
+  user should actually drop on the TULIPS-3D-WEB page - dropping it gives
+  a "Time Scale" dropdown to switch between every `time_scale_type` it
+  covers, and, for a binary, both the Profile and Binary views from that
+  one file, with no separate per-variant/per-star upload needed. See
+  `testing/scripts/run_dataprep_binary_8.4days_5Msun_3.125Msun_van_Eva.py`
+  (in the top-level `tulips3d` project) for a complete worked example.
+
+  The web viewer also draws three sidebar diagrams straight off this same
+  data, each appearing automatically whenever its underlying MESA history
+  columns are present (and hidden entirely otherwise, same graceful-
+  omission policy as Roche lobes etc. - see section 5): an HR diagram
+  (`log_L` vs `logTeff`), a core-burning T-Rho diagram (`log_center_T`/
+  `log_cntr_T` vs `log_center_Rho`/`log_cntr_Rho`), and a mass-transfer-
+  rate-vs-time diagram (`log_abs_mdot`) - the last one, for a binary, also
+  drives a particle stream flowing from the donor through the L1 point
+  onto the accretor in the 3D Binary view itself, scaled by the same
+  `log_abs_mdot`. None of this needs any extra `convertMesaData` option -
+  it's automatic whenever the relevant history columns exist.
 
 **Caching**: if `<save_to_dir>/MESA_data_dict.pkl` already exists,
-`convertMesaData` does nothing and just loads and returns that existing
-file - it will NOT re-process your MESA run. If you want to redo a run
-(e.g. with a different `t_resolution`), delete the old `save_to_dir`
-first, or use a different `save_to_dir`.
+`convertMesaData` does NOT re-process your MESA run - it just loads that
+existing pickle (and, separately, backfills a `.tulips3dweb` bundle next
+to it if one isn't already there too). If you want to redo a run (e.g.
+with a different `t_resolution`), delete the old `save_to_dir` first, or
+use a different `save_to_dir`.
 
 ## 3. Single star
 
